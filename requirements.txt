@@ -1,0 +1,13 @@
+streamlit
+pandas
+python-dotenv
+dateparser
+tabulate
+
+langchain
+langchain-experimental>=0.4.0
+langchain-community
+langchain-groq
+
+typing_extensions
+
