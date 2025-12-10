@@ -1,75 +1,53 @@
 # analysis_engine.py
+import pandas as pd
+import re
+from datetime import datetime, timezone
 from date_parser import parse_date_range
 from analytics_functions import (
-    total_revenue, top_n_cities, daily_trend, kpis_summary
+    total_revenue,
+    top_n_cities,
+    growth_decline,
+    revenue_by_source
 )
-import pandas as pd
-from datetime import datetime, timezone
-import re
 
+def interpret_and_run(q, df):
+    q_low = q.lower()
 
-def interpret_and_run(nl_query: str, df: pd.DataFrame):
-    """
-    Interpret a user's natural-language query and run the appropriate analytics function.
-    """
-
-    q = nl_query.lower().strip()
-
-    # --- 1) Parse dates safely ---
+    # 1️⃣ Determine date range
     start, end = parse_date_range(q, reference=datetime.now(timezone.utc))
-
-    if start is None or end is None:
-        # default: last 7 days
+    if start is None:
         end = datetime.now(timezone.utc).date()
         start = end - pd.Timedelta(days=6)
 
-    # --- 2) Revenue questions ---
-    if any(word in q for word in ['revenue', 'sales', 'amount']):
-        value = total_revenue(df, start, end)
-        return ("Total revenue", value,
-                {'type': 'value', 'start': str(start), 'end': str(end)})
-
-    # --- 3) Top N cities ---
-    m = re.search(r'top\s+(\d+)\s+cities', q)
+    # 2️⃣ Top N cities
+    m = re.search(r"top\s+(\d+)\s+cities", q_low)
     if m:
         n = int(m.group(1))
-        table = top_n_cities(df, start, end, n=n)
-        return (f"Top {n} cities by revenue", table,
-                {'type': 'table', 'start': str(start), 'end': str(end)})
+        return f"Top {n} cities by revenue", top_n_cities(df, start, end, n=n), {"type": "table"}
 
-    # --- 4) Default top cities ---
-    if 'top cities' in q or 'top city' in q:
-        table = top_n_cities(df, start, end, n=5)
-        return ("Top 5 cities by revenue", table,
-                {'type': 'table', 'start': str(start), 'end': str(end)})
+    if "top cities" in q_low:
+        return "Top 5 cities by revenue", top_n_cities(df, start, end), {"type": "table"}
 
-    # --- 5) Daily trend ---
-    if any(word in q for word in ['trend', 'daily', 'day wise', 'day-wise']):
-        table = daily_trend(df, start, end)
-        return (f"Daily revenue trend ({start} → {end})", table,
-                {'type': 'table', 'start': str(start), 'end': str(end)})
+    # 3️⃣ Source-wise revenue
+    if "source wise" in q_low or "sourcewise" in q_low:
+        return "Revenue by Source", revenue_by_source(df, start, end), {"type": "table"}
 
-    # --- 6) KPIs summary ---
-    if any(word in q for word in ['kpi', 'summary', 'overview', 'metrics']):
-        s = kpis_summary(df, start, end)
-        return ("KPIs summary", s,
-                {'type': 'value', 'start': str(start), 'end': str(end)})
+    # 4️⃣ Degrowth or decline
+    if "degrow" in q_low or "decline" in q_low:
+        cities = df["city"].dropna().unique()
+        out = []
+        prev_start = start - pd.Timedelta(days=(end - start).days + 1)
+        prev_end = start - pd.Timedelta(days=1)
 
-    # --- 7️⃣ Fallback: Find max revenue day ---
-    if any(word in q for word in ['max', 'maximum', 'highest']):
-        dt = daily_trend(df, start, end)
+        for city in cities:
+            out.append(growth_decline(df, prev_start, prev_end, start, end, city))
 
-        if not dt.empty:
-            # Safely locate peak revenue column
-            revenue_col = dt.columns[1]   # always second col after 'day'
-            max_idx = dt[revenue_col].idxmax()
-            row = dt.loc[max_idx]
+        out_df = pd.DataFrame(out)
+        return "City Degrowth Report", out_df.sort_values("decline_percent", ascending=False), {"type": "table"}
 
-            return ("Peak day",
-                    {'day': str(row['day']), 'revenue': float(row[revenue_col])},
-                    {'type': 'value', 'start': str(start), 'end': str(end)})
+    # 5️⃣ Revenue
+    if "revenue" in q_low:
+        return "Total Revenue", total_revenue(df, start, end), {"type": "value"}
 
-    # --- 8️⃣ Final fallback ---
-    s = kpis_summary(df, start, end)
-    return ("KPIs summary (fallback)", s,
-            {'type': 'value', 'start': str(start), 'end': str(end)})
+    # Default
+    return "Not Recognized", {"query": q}, {"type": "text"}

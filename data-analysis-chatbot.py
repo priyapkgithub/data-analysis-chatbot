@@ -1,14 +1,17 @@
 # data-analysis-bot.py
-import os
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import os
 from dotenv import load_dotenv
-from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_groq import ChatGroq
+from langchain_experimental.agents import create_pandas_dataframe_agent
 
-# ----------------------------------------------------
-# 1. PAGE UI CONFIG
-# ----------------------------------------------------
+from analysis_engine import interpret_and_run
+from analytics_functions import ensure_date_column
+
+# ------------------------------
+# Load ENV
+# ------------------------------
 st.set_page_config(page_title="AI Data Insights Bot", page_icon="📊", layout="wide")
 
 st.markdown("""
@@ -35,7 +38,7 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 
 llm = ChatGroq(
     api_key=groq_api_key,
-    model="llama-3.3-70b-versatile",   # FIXED FOR YOUR VERSION
+    model="llama-3.3-70b-versatile",
     temperature=0
 )
 
@@ -56,31 +59,33 @@ def load_data():
 df = load_data()
 
 # ----------------------------------------------------
-# 4. DATE FIX — REQUIRED FOR TIME QUERIES
+# 4. DATE FIX — CRITICAL FOR YESTERDAY / LAST 7 DAYS
 # ----------------------------------------------------
-df["collection_date"] = pd.to_datetime(df.get("collection_date"), errors="coerce")
+df["collection_date"] = pd.to_datetime(df["collection_date"], errors="coerce")
 max_date = df["collection_date"].max()
 
 if pd.isna(max_date):
-    st.error("⚠️ No valid 'collection_date' found. Check dataset.")
+    st.error("⚠️ No valid dates found in dataset. Check 'collection_date' column.")
     st.stop()
 
 st.session_state["LATEST_DATE"] = max_date
-st.info(f"📅 Latest available date in data: **{max_date.date()}**")
+st.info(f"📅 Latest data available: **{max_date.date()}**")
 
 # ----------------------------------------------------
-# 5. SYSTEM PROMPT FOR THE AGENT
+# 5. CREATE AGENT WITH SMART CUSTOM SYSTEM PROMPT
 # ----------------------------------------------------
 SYSTEM_INSTRUCTIONS = f"""
-You are a Data Analyst AI working on a Pandas DataFrame.
+You are a Data Analysis AI working over a Pandas DataFrame.
 
-Rules:
-1. Treat latest dataset date {max_date.date()} as TODAY.
-2. "Yesterday" = today - 1 day.
-3. "Last 7 days" = today - 7 → today.
-4. If the user asks for a date newer than {max_date.date()}, respond:
+IMPORTANT RULES:
+1. The latest date in the dataset is {max_date.date()} — treat this as “today”.
+2. If user asks:
+   - "yesterday" → use (today - 1 day)
+   - "last 7 days" → between (today - 7) to today
+   - "last month" → month(today - 30 days)
+3. If user asks a date that is newer than the latest dataset → respond:
    "Data is not updated till that date."
-5. Always provide a clean business explanation, NOT Python code.
+4. ALWAYS return a clean human-readable answer (no Python, no code).
 """
 
 agent = create_pandas_dataframe_agent(
@@ -100,7 +105,7 @@ st.markdown("<div class='sub-text'>Live Google Sheet → Instant Insights. Power
 st.write("---")
 
 # ----------------------------------------------------
-# 7. QUICK INSIGHTS BUTTONS
+# 7. QUICK QUERY BUTTONS
 # ----------------------------------------------------
 st.write("#### 🔍 Quick Insights")
 
@@ -145,3 +150,4 @@ if query:
             st.success(answer)
         except Exception as e:
             st.error(f"⚠️ Error: {e}")
+
